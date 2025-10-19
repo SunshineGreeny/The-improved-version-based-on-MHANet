@@ -27,7 +27,6 @@ class MHANet(nn.Module):
             in_channel, seq_len
         )
 
-        # ⚠️ 注意: Multiscale_Temporal_Attention 已移除
         self.Multiscale_Global_Attention = Multiscale_Global_Attention(
             in_channels=64
         )  # 修复 MGA
@@ -54,8 +53,6 @@ class MHANet(nn.Module):
             x_proc = x
 
         x_proc = self.EEGSingleStreamBlock(x_proc, cond_vec)  # [B, C, 1, T] -> same
-
-        # ⚠️ 注意: Multiscale_Temporal_Attention 调用已移除
 
         x_proc = self.Multiscale_Global_Attention(x_proc)  # [B, 64, 1, T]
 
@@ -163,7 +160,6 @@ class EEGSingleStreamBlock(nn.Module):
         self.channel_proj = nn.Conv2d(in_channels, hidden_dim, kernel_size=1)
 
         # qkv + mlp projection
-        # ⚠️ QKV 投影尺寸可能需要根据 hidden_dim 进行调整，但这里假设 hidden_dim=128
         self.qkv_proj = nn.Conv2d(
             hidden_dim, hidden_dim * 3 + self.mlp_hidden_dim, kernel_size=1
         )
