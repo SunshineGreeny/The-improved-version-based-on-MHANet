@@ -12,9 +12,6 @@ import logging
 import torch.nn as nn
 import torch.optim as optim
 import config
-import os # 确保 os 被导入
-import math # 确保 math 被导入
-import pandas as pd # 确保 pandas 被导入
 
 np.set_printoptions(suppress=True)
 
@@ -45,7 +42,7 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-# 训练前初始化配置
+# 训練前初始化配置
 def initiate(args, train_loader, valid_loader, test_loader, subject):
     model = MHANet(args)
 
@@ -57,10 +54,8 @@ def initiate(args, train_loader, valid_loader, test_loader, subject):
     criterion = nn.CrossEntropyLoss()
 
     # 获取优化器
-    # optimizer = optim.AdamW(params=model.parameters(), lr=0.005, weight_decay=3e-4)
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=0.003 / 10)
-    optimizer = optim.AdamW(params=model.parameters(), lr=0.001, weight_decay=3e-3)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=2, eta_min=0.003 / 10)
+    optimizer = optim.AdamW(params=model.parameters(), lr=0.005, weight_decay=3e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=0.003 / 10)
     model = model.cuda()
     criterion = criterion.cuda()
 
@@ -145,7 +140,6 @@ def train_model(settings, args, train_loader, valid_loader, test_loader, subject
 
     best_epoch = 1
     best_valid = float('inf')
-    epochs_without_improvement = 0 # 确保初始化
     for epoch in tqdm(range(1, args.max_epoch + 1), desc='Training Epoch', leave=False):
         train_loss, train_acc = train(model, optimizer, criterion, scheduler)
         val_loss, val_acc = evaluate(model, criterion, test=False)
@@ -170,8 +164,7 @@ def train_model(settings, args, train_loader, valid_loader, test_loader, subject
             save_model(args, model, name=args.name)
         else:
             epochs_without_improvement += 1
-            if epochs_without_improvement > args.patience: # 使用 args.patience
-                print(f"Early stopping at epoch {epoch}")
+            if epochs_without_improvement > 10:
                 break
 
     model = load_model(args, name=args.name)
@@ -182,132 +175,34 @@ def train_model(settings, args, train_loader, valid_loader, test_loader, subject
     return test_loss, test_acc
 
 
-def getData(args, dataset="DTU"):
-    seq_alldata = []
-    alllabel = []
-    alll_ckabel = []
-
-    if dataset == 'DTU':
-        for id in range(1, args.subject_number + 1):
-            onedata, onelabel = get_DTU_data(args, id)
-            onedata, onelabel, check_label = sliding_window(args, onedata, onelabel, id)
-            onedata = onedata.transpose(0, 2, 1)
-            seq_alldata.append(onedata)
-            alllabel.append(onelabel)
-            alll_ckabel.append(check_label)
-
-    elif dataset == 'KUL':
-        for id in range(1, args.subject_number + 1):
-            onedata, onelabel = get_KUL_data(args, id)
-            onedata, onelabel, check_label = sliding_window(args, onedata, onelabel, id)
-            onedata = onedata.transpose(0, 2, 1)
-            seq_alldata.append(onedata)
-            alllabel.append(onelabel)
-            alll_ckabel.append(check_label)
-
-    elif dataset == 'AVED':
-        for id in range(1, args.subject_number + 1):
-            onedata, onelabel = get_AVED_data(args, id)
-            onedata = onedata.reshape([args.trail_number, -1, args.eeg_channel])
-            onedata, onelabel, check_label = sliding_window(args, onedata, onelabel, id)
-            onedata = onedata.transpose(0, 2, 1)
-            seq_alldata.append(onedata)
-            alllabel.append(onelabel)
-            alll_ckabel.append(check_label)
-    return seq_alldata, alllabel, alll_ckabel
-
-
-# ========================= kul data =====================================
-def get_KUL_data(args, sub_id):
-    '''description: get all the data from one dataset
+# ========================= AVED 数据加载函数 ====================================
+def get_AVED_data(args, test_id, modality="audio-only"):
+    '''description: get AVED data for specific subject and modality
     param {type}
     return {type}:
-        data: list  16(subjects), each data is x *
-        label: '''
-    alldata = []
-    all_data_dir = os.listdir(args.data_path)
-    all_data_dir.sort()
-    # for s_data in range(len(all_data_dir)):
-    sub_path = args.data_path + str(sub_id)
-    sublabel_path = args.label_path + "S" + str(sub_id) + "No.csv"
-    sub_data_dir = os.listdir(sub_path)
-    sub_data_dir.sort()
-    for k in range(len(sub_data_dir)):
-        filename = sub_path + '/' + sub_data_dir[k]
-        data_pf = pd.read_csv(filename, header=None)
-        eeg_data = data_pf.iloc[:, 2:].values  # （46080，64）
+        data: EEG data
+        label: attention labels'''
 
-        alldata.append(eeg_data)
-    label_pf = pd.read_csv(sublabel_path, header=None)
-    all_label = label_pf.iloc[1:, 0].values
-    print('Finish get the data from: ', args.data_path + str(sub_id))
-    return alldata, all_label
+    # 根据模态选择数据路径
+    if modality == "audio-only":
+        # 修正: 将 args.data_path 改为 args.data_document_path
+        filename = os.path.join(args.data_document_path, "audio-only", f"sub{test_id}.csv")
+    elif modality == "audio-video":
+        # 修正: 将 args.data_path 改为 args.data_document_path
+        filename = os.path.join(args.data_document_path, "audio-video", f"sub{test_id}.csv")
+    else:
+        raise ValueError(f"Unsupported modality: {modality}")
 
+    if not os.path.exists(filename):
+        raise FileNotFoundError(f"Data file not found: {filename}")
 
-# ========================= dtu data =====================================
-def get_DTU_data(args, sub_id):
-    '''description: get all the data from one dataset
-    param {type}
-    return {type}:
-        data: list  16(subjects), each data is x *
-        label: '''
-    alldata = []
-    sub_path = args.data_path + "s" + str(sub_id) + "_data.npy"
-    sublabel_path = args.label_path + "s" + str(sub_id) + "_label.npy"
-    sub_data = np.load(sub_path)
-    sub_label = np.load(sublabel_path)
-    print('Finish get the data from: ', args.data_path + str(sub_id))
-    return sub_data, sub_label
+    data_pf = pd.read_csv(filename, header=None)
+    eeg_data = data_pf.iloc[:, :].values
 
+    # AVED 数据集标签：16个试次，交替的1和2
+    all_label = [1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2]
 
-# ========================= ahu data ====================================
-def get_AVED_data(args, sub_id, modality="audio-only"):
-    """
-    获取单个被试的数据 (修正: 移除硬编码标签，模拟加载标签)
-    """
-    # EEG Data File Path
-    eeg_filename = os.path.join(args.data_document_path, modality, f"sub{sub_id}.csv")
-
-    # 模拟标签文件路径 (AVED数据集的标签通常在一个独立的CSV或TXT文件中)
-    # 假设标签文件名为 subX_label.csv，并且与 eeg 文件在同一目录下
-    # 注意：这里需要根据 AVED 实际标签存储位置和格式进行修改！
-    label_filename = os.path.join(args.data_document_path, modality, f"sub{sub_id}_label.csv")
-
-    if not os.path.exists(eeg_filename):
-        raise FileNotFoundError(f"EEG Data file not found: {eeg_filename}")
-
-    # 加载 EEG 数据
-    eeg_data_pf = pd.read_csv(eeg_filename, header=None)
-    eeg_data = eeg_data_pf.values  # shape: (time, channels)
-
-    # 尝试加载标签数据 (关键修正)
-    try:
-        if not os.path.exists(label_filename):
-            # 如果找不到标签文件，则抛出错误，提示用户提供正确的标签文件
-            raise FileNotFoundError(f"Label file not found at expected path: {label_filename}")
-
-        # 假设标签文件 subX_label.csv 包含一个包含所有试次标签的列
-        label_pf = pd.read_csv(label_filename, header=None)
-        # 假设标签在第一列，且需要从1开始的标签转换为从0开始 (例如 1 -> 0, 2 -> 1)
-        # 假设标签是 N_trials x 1 的形状，并且需要进行 -1 操作以匹配 [0, N_classes-1]
-        all_label = label_pf.values.astype(np.int32).flatten()
-        # 假设原始标签从 1 开始，需减 1
-        if np.min(all_label) >= 1:
-            all_label = all_label - 1
-
-            # 检查标签数量是否与试次数量匹配
-        if len(all_label) != args.trail_number:
-            print(f"CRITICAL WARNING: Number of loaded labels ({len(all_label)}) does not match args.trail_number ({args.trail_number}). Check label file content.")
-
-    except FileNotFoundError as e:
-        print(f"Error loading labels: {e}")
-        # 如果标签加载失败，回退到硬编码标签（但这是为了防止代码崩溃，应该被用户修正）
-        print("Falling back to hardcoded dummy labels. **Results will be invalid.** Please fix label loading.")
-        all_label = np.array([[1], [2], [1], [2], [1], [2], [1], [2], [1], [2], [1], [2], [1], [2], [1], [2]]).flatten() - 1
-
-    print(f'Finish get the data from: {eeg_filename}')
-
-    # 返回聚合数据和试次标签
+    print(f'Finish get the {modality} data from: {filename}')
     return eeg_data, all_label
 
 
@@ -343,15 +238,6 @@ def main_KUL(name="S13", dataset="KUL", data_document_path="../KUL", time_len=1)
     logger = get_logger(args.name, args.log_path, time_len)
 
     # load data 和 label
-    # read_prepared_data 在 KUL/DTU 结构中可能扮演了另一个角色，这里我们跳过它，使用原始的 KUL/DTU 逻辑
-    # 假设 args.data_path 和 args.label_path 在 config 中被正确设置
-    # eeg_data, event_data = read_prepared_data(args)
-
-    # 假设 KUL 数据的加载逻辑是正确的
-    # 此处省略 KUL 特有的加载逻辑，保持原代码不变
-
-    # ... KUL 加载逻辑 ...
-
     eeg_data, event_data = read_prepared_data(args)
 
     data = np.vstack(eeg_data)
@@ -407,7 +293,7 @@ def main_KUL(name="S13", dataset="KUL", data_document_path="../KUL", time_len=1)
     test_loader = DataLoader(dataset=CustomDatasets(seq_test_data, test_label),
                              batch_size=args.batch_size, drop_last=True)
 
-    # 训练
+    # 训練
     loss, acc = initiate(args, train_loader, valid_loader, test_loader, args.name)
 
     info_msg = f'{dataset}_{name}_{str(time_len)}s loss:{str(loss)} acc:{str(acc.item())}'
@@ -429,7 +315,7 @@ def main_DTU(name="S13", dataset="KUL", data_document_path="../DTU", time_len=1)
     args.window_length = math.ceil(args.fs * time_len)
     args.overlap = 0.5
     args.batch_size = 32  # 批量大小
-    args.max_epoch = 100
+    args.max_epoch = 20
     args.patience = 15
     args.log_interval = 20
     args.image_size = 32
@@ -511,7 +397,7 @@ def main_DTU(name="S13", dataset="KUL", data_document_path="../DTU", time_len=1)
     test_loader = DataLoader(dataset=CustomDatasets(seq_test_data, test_label),
                              batch_size=args.batch_size, drop_last=True)
 
-    # 训练
+    # 训練
     loss, acc = initiate(args, train_loader, valid_loader, test_loader, args.name)
 
     info_msg = f'{dataset}_{name}_{str(time_len)}s loss:{str(loss)} acc:{str(acc.item())}'
@@ -539,7 +425,8 @@ def main_AVED(name="S1", dataset="AVED", data_document_path="../AVED", time_len=
     args.log_interval = 20
     args.image_size = 32
     args.people_number = 10
-    args.eeg_channel = 64
+    args.eeg_channel = 32  # 修正: AVED 物理上就是 32 通道
+    args.csp_comp = 32     # 修正: CSP 组件数不能超过 EEG 通道数
     args.audio_channel = 1
     args.channel_number = args.eeg_channel + args.audio_channel * 2
     args.trail_number = 16
@@ -547,78 +434,69 @@ def main_AVED(name="S1", dataset="AVED", data_document_path="../AVED", time_len=
     args.test_percent = 0.2
     args.vali_percent = 0.1
     args.label_col = 0
-    args.csp_comp = 32
     args.log_path = "./result"
+    args.win_len = args.window_length
+    args.window_lap = args.window_length * args.overlap
 
     args.frequency_resolution = args.fs / args.window_length
+    args.window_metadata = DotMap(start=0, end=1, target=2, index=3, trail_number=4, subject_number=5)
 
     logger = get_logger(f"{args.name}_{modality}", args.log_path, time_len)
 
-    # ------------------- 加载 AVED 数据 (修正标签加载) -------------------
+    # 加载 AVED 数据
     print(f'Loading AVED {modality} data for subject {args.name}...')
-    # eeg_data_agg: (samples, channels), event_data: (n_trials,)
-    eeg_data_agg, event_data = get_AVED_data(args, args.subject_number, modality)
+    eeg_data, event_data = get_AVED_data(args, args.subject_number, modality)
+    # 将标签从 [1, 2] 转换为 [0, 1]，以匹配模型的输出 (0-indexed)
+    event_data = np.array(event_data) - 1
 
-    # ------------------- 重塑为试次 (与 KUL/DTU 逻辑匹配) -------------------
-    # shape (N_trials, samples_per_trial, channels)
-    samples_per_trial = eeg_data_agg.shape[0] // args.trail_number
+    # 重塑数据为试次格式
+    samples_per_trial = eeg_data.shape[0] // args.trail_number
     eeg_data_reshaped = []
     for i in range(args.trail_number):
         start_idx = i * samples_per_trial
         end_idx = (i + 1) * samples_per_trial
-        trial_data = eeg_data_agg[start_idx:end_idx, :]
+        trial_data = eeg_data[start_idx:end_idx, :]
         eeg_data_reshaped.append(trial_data)
-    eeg_data_reshaped = np.array(eeg_data_reshaped)
 
-    # 调整维度以匹配 KUL/DTU 的 within_data 输入要求: (N_trails, channels, time)
-    eeg_data = eeg_data_reshaped.transpose(0, 2, 1)
-    # event_data 已经是 (N_trials,)，不需要 squeeze
+    eeg_data_reshaped = np.array(eeg_data_reshaped)  # (16, samples_per_trial, 32)
 
-    # ------------------- 试次级划分 (修正: 引入 within_data 避免数据泄漏) -------------------
-    # within_data 假设将 eeg_data (N_trials, C, T) 按试次划分为训练和测试集
-    # 并将 event_data (N_trials,) 对应划分
-    # 注意: within_data 默认使用 90%/10% 的比例进行划分 (参见 data_process.py)
-    train_data, test_data, train_label_trials, test_label_trials = within_data(eeg_data, event_data)
+    # 应用滑动窗口
+    # 修正 START:
+    # 1. sliding_window 函数已被修正，不再内部分割数据集，仅执行窗口化操作。
+    # 2. 修正了函数调用，传递正确的通道数 `args.eeg_channel` 而不是 `args.subject_number`。
+    # 3. 修正了返回值解包，因为修正后的函数返回 2 个值。
+    eeg_windows, event_windows = sliding_window(eeg_data_reshaped, event_data, args, args.eeg_channel)
+    # 修正 END
 
-    # ------------------- 应用 CSP 变换 (修正: 引入 CSP) -------------------
-    csp = CSP(n_components=args.csp_comp, reg=None, log=None, cov_est='concat', transform_into='csp_space',
-              norm_trace=True)
-    # CSP 作用于 (N_trials, N_channels, N_samples)
-    train_data_csp = csp.fit_transform(train_data, train_label_trials) # (N_train_trials, 32, T)
-    test_data_csp = csp.transform(test_data)                          # (N_test_trials, 32, T)
+    # 转换为适合CSP的格式
+    eeg_windows = eeg_windows.transpose(0, 2, 1)  # (n_windows, channels, time_points)
+    event_windows = np.squeeze(event_windows)
 
-    # ... (维度转置和滑动窗口部分不变)
+    # 划分训练测试集
+    train_data, test_data, train_label, test_label = train_test_split(
+        eeg_windows, event_windows, test_size=args.test_percent,
+        random_state=42, stratify=event_windows
+    )
 
-    # ------------------- 滑动窗口 (修正: 使用 sliding_window_csp) -------------------
-    train_eeg, train_label = sliding_window_csp(train_data_csp.transpose(0, 2, 1), train_label_trials, args,
-                                                args.csp_comp) # (N_windows, T, 32)
-    test_eeg, test_label = sliding_window_csp(test_data_csp.transpose(0, 2, 1), test_label_trials, args,
-                                              args.csp_comp) # (N_windows, T, 32)
+    # 应用CSP
+    csp = CSP(n_components=args.csp_comp, reg=None, log=None, cov_est='concat',
+              transform_into='csp_space', norm_trace=True)
+    train_data = csp.fit_transform(train_data, train_label)
+    test_data = csp.transform(test_data)
 
-    # ------------------- 填充 CSP 输出到 64 维 (兼容模型硬编码) -------------------
-    target_csp_dim = 64
-    if args.csp_comp < target_csp_dim:
-        pad_width = ((0, 0), (0, 0), (0, target_csp_dim - args.csp_comp), (0, 0)) # (N_win, T, C, 1)
+    # 调整维度
+    train_data = train_data.transpose(0, 2, 1)  # (n_train, time_points, csp_components)
+    test_data = test_data.transpose(0, 2, 1)  # (n_test, time_points, csp_components)
 
-        # 原始 shape: (N_windows, time, features=32, 1)
-        seq_train_data = np.expand_dims(train_eeg, axis=-1)
-        seq_test_data = np.expand_dims(test_eeg, axis=-1)
+    # 应用滑动窗口到CSP特征
+    train_eeg, train_label = sliding_window_csp(train_data, train_label, args, args.csp_comp)
+    test_eeg, test_label = sliding_window_csp(test_data, test_label, args, args.csp_comp)
 
-        # 填充到 features=64
-        seq_train_data = np.pad(seq_train_data, pad_width, mode='constant', constant_values=0)
-        seq_test_data = np.pad(seq_test_data, pad_width, mode='constant', constant_values=0)
+    # 准备数据
+    seq_train_data = np.expand_dims(train_eeg, axis=-1)
+    seq_test_data = np.expand_dims(test_eeg, axis=-1)
 
-        # 更新 args.csp_comp 为 64，以确保后续转置和日志正确
-        args.csp_comp = target_csp_dim
-        print(f"CSP features padded from 32 to {target_csp_dim} to match model's hardcoded input.")
-    else:
-        seq_train_data = np.expand_dims(train_eeg, axis=-1)
-        seq_test_data = np.expand_dims(test_eeg, axis=-1)
-
-    # ------------------- 释放内存 (确保在填充后，释放原始的中间变量) -------------------
-    del eeg_data_agg, eeg_data_reshaped, eeg_data, train_data_csp, test_data_csp, train_data, test_data
-
-    # ------------------- 随机化 (可选，但保持一致) -------------------
+    # 打乱数据
     np.random.seed(200)
     np.random.shuffle(seq_train_data)
     np.random.seed(200)
@@ -629,30 +507,24 @@ def main_AVED(name="S1", dataset="AVED", data_document_path="../AVED", time_len=
     np.random.seed(200)
     np.random.shuffle(test_label)
 
-
-    # ------------------- 划分验证集 -------------------
-    # stratify=train_label 仅当 train_label 是 1D 数组时可用
+    # 划分验证集
     seq_train_data, seq_valid_data, train_label, valid_label = train_test_split(
-        seq_train_data, train_label, test_size=args.vali_percent, random_state=42, stratify=train_label.flatten() # stratify 需要 1D array
+        seq_train_data, train_label, test_size=args.vali_percent, random_state=42
     )
 
     args.n_train = np.size(train_label)
     args.n_valid = np.size(valid_label)
     args.n_test = np.size(test_label)
 
-    # ------------------- 调整维度为 (batch, channel=1, features=CSP_comp, time) -------------------
-    # 原始形状: (N_windows, time, features, 1)
-    # 目标形状 (与 KUL/DTU 一致): (N_windows, 1, features, time)
-    # 修正: 使用正确的转置 (0, 3, 2, 1)
-    seq_train_data = seq_train_data.transpose(0, 3, 2, 1) # <--- 修正此处
+    # 调整维度顺序
+    seq_train_data = seq_train_data.transpose(0, 3, 2, 1)
     seq_valid_data = seq_valid_data.transpose(0, 3, 2, 1)
     seq_test_data = seq_test_data.transpose(0, 3, 2, 1)
 
-    # 检查最终形状
-    print(f"Final Training data shape: {seq_train_data.shape} (N_windows, 1, time, features)")
-    print(f"Training labels distribution: {np.unique(train_label, return_counts=True)}")
+    print(f"Training data shape: {seq_train_data.shape}")
+    print(f"Training labels: {np.unique(train_label, return_counts=True)}")
 
-    # ------------------- 数据加载器 -------------------
+    # 创建数据加载器
     train_loader = DataLoader(dataset=CustomDatasets(seq_train_data, train_label),
                               batch_size=args.batch_size, drop_last=True)
     valid_loader = DataLoader(dataset=CustomDatasets(seq_valid_data, valid_label),
@@ -660,7 +532,7 @@ def main_AVED(name="S1", dataset="AVED", data_document_path="../AVED", time_len=
     test_loader = DataLoader(dataset=CustomDatasets(seq_test_data, test_label),
                              batch_size=args.batch_size, drop_last=True)
 
-    # ------------------- 训练 -------------------
+    # 训練
     loss, acc = initiate(args, train_loader, valid_loader, test_loader, f"{args.name}_{modality}")
 
     info_msg = f'{dataset}_{name}_{modality}_{str(time_len)}s loss:{loss:.4f} acc:{acc.item():.4f}'
@@ -681,10 +553,10 @@ if __name__ == "__main__":
 
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
+    total_acc = 0
 
     result_logger.addHandler(file_handler)
     all_test_acc = []
-
     if config.dataset == "KUL":
         for i in range(1, config.people_number + 1):
             name = 'S' + str(i)
@@ -718,9 +590,10 @@ if __name__ == "__main__":
             result_logger.info(info_msg)
             all_test_acc.extend(modality_acc)
 
-    if all_test_acc:
-        final_avg_acc = np.mean(all_test_acc)
-        final_std_acc = np.std(all_test_acc)
-        print(f'Final average accuracy: {final_avg_acc:.4f} ± {final_std_acc:.4f}')
-        info_msg = f'Final_{config.dataset}_{str(config.time_len)}s avg_acc:{final_avg_acc:.4f} std:{final_std_acc:.4f}'
-        result_logger.info(info_msg)
+    # 修正 START:
+    # `total_acc` 仅保存最后一次循环的结果，不能用于计算平均值。
+    # 应使用 `all_test_acc` 列表，它包含了所有被试的结果。
+    print(f'avg_acc: {np.mean(all_test_acc):.4f}')
+    # 修正 END
+    info_msg = f'The average accuracy of {config.dataset}_{str(config.time_len)}s avg_acc:{np.mean(all_test_acc):.4f} std:{np.std(all_test_acc):.4f} '
+    result_logger.info(info_msg)
